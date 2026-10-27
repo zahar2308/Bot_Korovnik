@@ -35,6 +35,11 @@ is_milked = False
 reminder_task = None
 next_message_time = None
 
+# --- НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ ---
+last_message = None
+was_clicked = False
+# ------------------------------------------------
+
 
 # ---------- РАБОТА С GOOGLE SHEETS ----------
 def upload_to_google_sheets(entries: list) -> str:
@@ -124,12 +129,13 @@ class FarmView(discord.ui.View):
         self.add_item(self.btn_feed)
 
     async def feed_callback(self, interaction: discord.Interaction):
-        global is_fed, fed_by
+        global is_fed, fed_by, was_clicked # Добавили was_clicked
         if is_fed:
             # Если уже нажали, показываем, кто именно нажал первым
             await interaction.response.send_message(f"Игрок {fed_by} уже покормил", ephemeral=True)
             return
             
+        was_clicked = True # <--- Пометка, что на кнопку нажали
         is_fed = True
         fed_by = interaction.user.display_name
         save_state()
@@ -142,12 +148,13 @@ class FarmView(discord.ui.View):
         await reset_timer()
 
     async def milk_callback(self, interaction: discord.Interaction):
-        global is_milked, milked_by
+        global is_milked, milked_by, was_clicked # Добавили was_clicked
         if is_milked:
             # Если уже нажали, показываем, кто именно нажал первым
             await interaction.response.send_message(f"Игрок {milked_by} уже подоил", ephemeral=True)
             return
 
+        was_clicked = True # <--- Пометка, что на кнопку нажали
         is_milked = True
         milked_by = interaction.user.display_name
         save_state()
@@ -197,6 +204,18 @@ class FarmView(discord.ui.View):
 
 # ---------- ОТПРАВКА СООБЩЕНИЯ И ТАЙМЕР ----------
 async def send_farm_message():
+    global last_message, was_clicked # <--- Добавили глобальные переменные
+    
+    # Если было старое сообщение и на него не нажимали — удаляем
+    if last_message is not None and not was_clicked:
+        try:
+            await last_message.delete()
+            print("Предыдущее сообщение удалено (на него не нажимали).")
+        except Exception:
+            pass # Если уже удалено или нет прав
+            
+    was_clicked = False # Сбрасываем флаг для нового сообщения
+
     load_state()
     channel = bot.get_channel(CHANNEL_ID)
     if channel is None:
@@ -204,7 +223,7 @@ async def send_farm_message():
         return
         
     view = FarmView()
-    await channel.send("Нажмите кнопку, когда выполните действие:", view=view)
+    last_message = await channel.send("Нажмите кнопку, когда выполните действие:", view=view) # <--- Сохраняем объект сообщения
 
 async def reset_timer():
     global reminder_task, next_message_time
