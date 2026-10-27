@@ -13,9 +13,6 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY main.py .
 
 RUN mkdir -p /app/data \
- && useradd -m -u 1000 botuser \
- && chown -R botuser:botuser /app
-USER botuser
 
 VOLUME ["/app/data"]
 
