@@ -145,7 +145,8 @@ class FarmView(discord.ui.View):
         save_state()
         await self.log_click(interaction, "покормил")
         await interaction.response.send_message("Вы покормили! 🍎", ephemeral=True)
-        
+
+        self.btn_feed.disabled = True
         await self.update_buttons(interaction)
         await reset_timer()
 
