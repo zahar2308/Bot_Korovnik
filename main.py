@@ -14,7 +14,7 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID", "1197494268353314882"))
 REMINDER_HOURS = int(os.getenv("REMINDER_HOURS", "3"))
 
 # Настройки Google
-GOOGLE_CREDENTIALS_FILE = "credentials.json" 
+GOOGLE_CREDENTIALS_FILE = DATA_DIR / "credentials.json" 
 GOOGLE_SHEET_ID = "1EXeD14wIJtXLGgLN1E47tW2HIhwrpzmym9aZuQPPXAw" 
 GOOGLE_SHEET_NAME = "Коровник" 
 # -----------------
