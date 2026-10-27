@@ -9,17 +9,17 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- НАСТРОЙКИ ---
-DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 TOKEN = os.getenv("DISCORD_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "1197494268353314882"))
-REMINDER_HOURS = int(os.getenv("REMINDER_HOURS", "3"))
 
 # Настройки Google
-GOOGLE_CREDENTIALS_FILE = DATA_DIR / "credentials.json" 
+GOOGLE_CREDENTIALS_FILE = "/app/credentials.json" 
 GOOGLE_SHEET_ID = "1EXeD14wIJtXLGgLN1E47tW2HIhwrpzmym9aZuQPPXAw" 
-GOOGLE_SHEET_NAME = "Коровник" 
+GOOGLE_SHEET_NAME = "Logs" 
 # -----------------
+
+DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_FILE   = DATA_DIR / "clicks.json"
 STATE_FILE = DATA_DIR / "state.json"
@@ -32,8 +32,6 @@ clicks_log = []
 is_fed = False
 is_milked = False
 reminder_task = None
-
-# Переменная для хранения времени следующего сообщения
 next_message_time = None
 
 
@@ -103,21 +101,25 @@ class FarmView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         
-        self.btn_feed = discord.ui.Button(
-            label=f"{'🟢' if is_fed else '🔴'} покормил", 
-            style=discord.ButtonStyle.green, 
-            custom_id="feed_button"
-        )
+        # 1. Кнопка "подоил" (теперь первая)
         self.btn_milk = discord.ui.Button(
             label=f"{'🟢' if is_milked else '🔴'} подоил", 
             style=discord.ButtonStyle.blurple, 
             custom_id="milk_button"
         )
+        # 2. Кнопка "покормил" (теперь вторая)
+        self.btn_feed = discord.ui.Button(
+            label=f"{'🟢' if is_fed else '🔴'} покормил", 
+            style=discord.ButtonStyle.green, 
+            custom_id="feed_button"
+        )
 
-        self.btn_feed.callback = self.feed_callback
         self.btn_milk.callback = self.milk_callback
-        self.add_item(self.btn_feed)
+        self.btn_feed.callback = self.feed_callback
+
+        # Добавляем на панель в нужном порядке
         self.add_item(self.btn_milk)
+        self.add_item(self.btn_feed)
 
     async def feed_callback(self, interaction: discord.Interaction):
         global is_fed
@@ -152,8 +154,8 @@ class FarmView(discord.ui.View):
     async def update_buttons(self, interaction: discord.Interaction):
         global is_fed, is_milked
         
-        self.btn_feed.label = f"{'🟢' if is_fed else '🔴'} покормил"
         self.btn_milk.label = f"{'🟢' if is_milked else '🔴'} подоил"
+        self.btn_feed.label = f"{'🟢' if is_fed else '🔴'} покормил"
         await interaction.message.edit(view=self)
 
         if is_fed and is_milked:
@@ -165,7 +167,6 @@ class FarmView(discord.ui.View):
         now = datetime.now()
         real_time = now.strftime("%Y-%m-%d %H:%M:%S")
         
-        # Округление вниз до часа: 17:35 -> 17:00
         current_hour = now.replace(minute=0, second=0, microsecond=0)
         rounded_time = current_hour.strftime("%Y-%m-%d %H:00:00")
 
@@ -174,8 +175,8 @@ class FarmView(discord.ui.View):
             "user_name": str(interaction.user),
             "display_name": interaction.user.display_name,
             "action": action,
-            "time": real_time,          # В Google-таблицу
-            "rounded_time": rounded_time, # Для внутренней логики
+            "time": real_time,
+            "rounded_time": rounded_time,
             "channel_id": interaction.channel_id,
         }
         clicks_log.append(entry)
@@ -200,12 +201,9 @@ async def reset_timer():
         reminder_task.cancel()
         
     now = datetime.now()
-    # 1. Округляем вниз до текущего часа (17:35 -> 17:00)
     current_hour = now.replace(minute=0, second=0, microsecond=0)
-    # 2. Прибавляем 3 часа (17:00 -> 20:00)
     next_message_time = current_hour + timedelta(hours=3)
     
-    # Вычисляем, сколько секунд ждать
     wait_seconds = (next_message_time - now).total_seconds()
     
     print(f"Следующее сообщение будет в {next_message_time.strftime('%H:%M:%S')} (через {int(wait_seconds)} сек.)")
@@ -215,7 +213,6 @@ async def wait_and_send(wait_seconds):
     try:
         await asyncio.sleep(wait_seconds)
         await send_farm_message()
-        # После отправки сразу ставим следующий таймер (на случай, если никто не нажмет)
         await reset_timer()
     except asyncio.CancelledError:
         pass
@@ -237,7 +234,7 @@ async def daily_export():
             await channel.send(f"📊 **Ежедневная выгрузка логов** завершена!\nПосмотреть таблицу: {url}")
         print("Ежедневная выгрузка успешно завершена.")
     except Exception as e:
-        print(f"❌ Ошибка при ежедневной выгрузке: {e}")
+        print(f"❌ Ошибка при ежедневной выгрузке: {repr(e)}")
 
 
 # ---------- СОБЫТИЯ ----------
@@ -261,7 +258,6 @@ async def test_cmd(ctx: commands.Context):
 
 @bot.command(name="time")
 async def time_cmd(ctx: commands.Context):
-    """Показывает, когда придет следующее сообщение с кнопками."""
     global next_message_time
     if next_message_time is None:
         await ctx.send("Таймер пока не запущен. Нажмите любую кнопку, чтобы запустить его.")
@@ -274,7 +270,6 @@ async def time_cmd(ctx: commands.Context):
         await ctx.send("Сообщение с кнопками должно прийти с минуты на минуту...")
         return
         
-    # Переводим секунды в часы, минуты и секунды
     hours = int(wait_seconds // 3600)
     minutes = int((wait_seconds % 3600) // 60)
     seconds = int(wait_seconds % 60)
@@ -289,15 +284,20 @@ async def show_log(ctx: commands.Context, limit: int = 0):
         await ctx.send(f"Таблица **{GOOGLE_SHEET_NAME}** пуста.")
         return
         
-    recent = clicks_log[-limit:]
+    if limit == 0:
+        recent = clicks_log
+    else:
+        recent = clicks_log[-limit:]
+        
     loop = asyncio.get_event_loop()
     try:
         url = await loop.run_in_executor(None, upload_to_google_sheets, recent)
     except Exception as e:
+        print(f"❌ ОШИБКА GOOGLE API: {repr(e)}")
         await ctx.send(f"❌ Ошибка при отправке в Google: {e}")
         return
 
-    await ctx.send(f"📊 Логи успешно обновлены! Посмотреть таблицу: {url}")
+    await ctx.send(f"📊 Логи успешно обновлены! Выгружено записей: **{len(recent)}**.\nПосмотреть таблицу: {url}")
 
 @bot.command(name="clearlog")
 @commands.has_permissions(administrator=True)
