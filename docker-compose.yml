@@ -7,7 +7,7 @@ services:
     container_name: discord-farm-bot
     restart: unless-stopped
     volumes:
-      - /volume2/docker/discord/korovnic:/app/data
+      - farm-data:/app/data
     environment:
       - TZ=Europe/Moscow
       - DISCORD_TOKEN=${DISCORD_TOKEN}
@@ -19,3 +19,5 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+volumes:
+  farm-data:
