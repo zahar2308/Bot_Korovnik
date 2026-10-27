@@ -284,7 +284,7 @@ async def time_cmd(ctx: commands.Context):
 
 @bot.command(name="log")
 @commands.has_permissions(administrator=True)
-async def show_log(ctx: commands.Context, limit: int = 10):
+async def show_log(ctx: commands.Context, limit: int = 0):
     if not clicks_log:
         await ctx.send(f"Таблица **{GOOGLE_SHEET_NAME}** пуста.")
         return
