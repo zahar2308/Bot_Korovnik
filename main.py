@@ -17,7 +17,7 @@ REMINDER_HOURS = int(os.getenv("REMINDER_HOURS", "3"))
 LOG_CHANNEL_ID = None
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 # -----------------
 
 LOG_FILE   = DATA_DIR / "clicks.json"
