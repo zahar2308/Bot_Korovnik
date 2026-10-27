@@ -1,0 +1,22 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: discord-farm-bot:latest
+    container_name: discord-farm-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - farm-data:/app/data
+    environment:
+      - TZ=Europe/Moscow
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  farm-data:
