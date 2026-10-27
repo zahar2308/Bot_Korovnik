@@ -9,17 +9,18 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- НАСТРОЙКИ ---
-TOKEN = os.getenv("DISCORD_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "1197494268353314882"))
-
-# Настройки Google
-GOOGLE_CREDENTIALS_FILE = "/app/credentials.json" 
-GOOGLE_SHEET_ID = "1EXeD14wIJtXLGgLN1E47tW2HIhwrpzmym9aZuQPPXAw" 
-GOOGLE_SHEET_NAME = "Logs" 
-# -----------------
-
 DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+TOKEN = os.getenv("DISCORD_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "1197494268353314882"))
+REMINDER_HOURS = int(os.getenv("REMINDER_HOURS", "3"))
+
+# Настройки Google
+GOOGLE_CREDENTIALS_FILE = DATA_DIR / "credentials.json" 
+GOOGLE_SHEET_ID = "1EXeD14wIJtXLGgLN1E47tW2HIhwrpzmym9aZuQPPXAw" 
+GOOGLE_SHEET_NAME = "Коровник" 
+# -----------------
+
 
 LOG_FILE   = DATA_DIR / "clicks.json"
 STATE_FILE = DATA_DIR / "state.json"
