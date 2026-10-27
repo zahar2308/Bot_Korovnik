@@ -179,14 +179,20 @@ class FarmView(discord.ui.View):
             is_fed = False
             is_milked = False
             save_state()
+# ---------- ТАЙМЕР НА 3 ЧАСА ----------
+ async def log_click(self, interaction: discord.Interaction, action: str):
+        now = datetime.now()
+        
+        current_hour = now.replace(minute=0, second=0, microsecond=0)
+        
+        bucket_time = current_hour + timedelta(hours=3)
 
-    async def log_click(self, interaction: discord.Interaction, action: str):
         entry = {
             "user_id": interaction.user.id,
             "user_name": str(interaction.user),
             "display_name": interaction.user.display_name,
             "action": action,
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "time": bucket_time.strftime("%Y-%m-%d %H:%M:%S"),
             "channel_id": interaction.channel_id,
         }
         clicks_log.append(entry)
