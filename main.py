@@ -31,6 +31,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 clicks_log = []
 is_fed = False
 is_milked = False
+reminder_task = None
 
 
 # ---------- РАБОТА С GOOGLE SHEETS ----------
