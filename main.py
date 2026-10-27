@@ -67,18 +67,22 @@ def upload_to_google_sheets(entries: list) -> str:
 # ---------- СОХРАНЕНИЕ СОСТОЯНИЯ ----------
 def save_state():
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"is_fed": is_fed, "is_milked": is_milked}, f)
+        json.dump({"is_fed": is_fed, "is_milked": is_milked, "fed_by": fed_by, "milked_by": milked_by}, f)
 
 def load_state():
-    global is_fed, is_milked
+    global is_fed, is_milked, fed_by, milked_by
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             is_fed = data.get("is_fed", False)
             is_milked = data.get("is_milked", False)
+            fed_by = data.get("fed_by", None)
+            milked_by = data.get("milked_by", None)
     except FileNotFoundError:
         is_fed = False
         is_milked = False
+        fed_by = None
+        milked_by = None
 
 
 # ---------- РАБОТА С ЛОГОМ ----------
@@ -102,13 +106,11 @@ class FarmView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         
-        # 1. Кнопка "подоил" (первая)
         self.btn_milk = discord.ui.Button(
             label=f"{'🟢' if is_milked else '🔴'} подоил", 
             style=discord.ButtonStyle.blurple, 
             custom_id="milk_button"
         )
-        # 2. Кнопка "покормил" (вторая)
         self.btn_feed = discord.ui.Button(
             label=f"{'🟢' if is_fed else '🔴'} покормил", 
             style=discord.ButtonStyle.green, 
@@ -122,12 +124,14 @@ class FarmView(discord.ui.View):
         self.add_item(self.btn_feed)
 
     async def feed_callback(self, interaction: discord.Interaction):
-        global is_fed
+        global is_fed, fed_by
         if is_fed:
-            await interaction.response.send_message(f"Игрок {interaction.user.display_name} уже покормил", ephemeral=True)
+            # Если уже нажали, показываем, кто именно нажал первым
+            await interaction.response.send_message(f"Игрок {fed_by} уже покормил", ephemeral=True)
             return
             
         is_fed = True
+        fed_by = interaction.user.display_name
         save_state()
         await self.log_click(interaction, "покормил")
         
@@ -138,12 +142,14 @@ class FarmView(discord.ui.View):
         await reset_timer()
 
     async def milk_callback(self, interaction: discord.Interaction):
-        global is_milked
+        global is_milked, milked_by
         if is_milked:
-            await interaction.response.send_message(f"Игрок {interaction.user.display_name} уже подоил", ephemeral=True)
+            # Если уже нажали, показываем, кто именно нажал первым
+            await interaction.response.send_message(f"Игрок {milked_by} уже подоил", ephemeral=True)
             return
 
         is_milked = True
+        milked_by = interaction.user.display_name
         save_state()
         await self.log_click(interaction, "подоил")
         
@@ -154,15 +160,18 @@ class FarmView(discord.ui.View):
         await reset_timer()
 
     async def update_buttons(self, interaction: discord.Interaction):
-        global is_fed, is_milked
+        global is_fed, is_milked, fed_by, milked_by
         
         self.btn_milk.label = f"{'🟢' if is_milked else '🔴'} подоил"
         self.btn_feed.label = f"{'🟢' if is_fed else '🔴'} покормил"
         await interaction.message.edit(view=self)
 
         if is_fed and is_milked:
+            # Сбрасываем состояние для следующего сообщения
             is_fed = False
             is_milked = False
+            fed_by = None
+            milked_by = None
             save_state()
 
     async def log_click(self, interaction: discord.Interaction, action: str):
