@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: discord-farm-bot:latest
+    image: discord-farm-bot
     container_name: discord-farm-bot
     restart: unless-stopped
     volumes:
