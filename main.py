@@ -1,25 +1,25 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import asyncio
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from pathlib import Path
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # --- НАСТРОЙКИ ---
-DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 TOKEN = os.getenv("DISCORD_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "1197494268353314882"))
-REMINDER_HOURS = int(os.getenv("REMINDER_HOURS", "3"))
 
 # Настройки Google
-GOOGLE_CREDENTIALS_FILE = DATA_DIR / "credentials.json" 
+GOOGLE_CREDENTIALS_FILE = "credentials.json" 
 GOOGLE_SHEET_ID = "1EXeD14wIJtXLGgLN1E47tW2HIhwrpzmym9aZuQPPXAw" 
-GOOGLE_SHEET_NAME = "Коровник" 
+GOOGLE_SHEET_NAME = "Logs" 
 # -----------------
+
+DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_FILE   = DATA_DIR / "clicks.json"
 STATE_FILE = DATA_DIR / "state.json"
@@ -33,23 +33,23 @@ is_fed = False
 is_milked = False
 reminder_task = None
 
+# Переменная для хранения времени следующего сообщения
+next_message_time = None
+
 
 # ---------- РАБОТА С GOOGLE SHEETS ----------
 def upload_to_google_sheets(entries: list) -> str:
-    """Отправляет данные в Google Таблицу и возвращает ссылку на неё."""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
     client = gspread.authorize(creds)
     
     sheet = client.open_by_key(GOOGLE_SHEET_ID)
-    
     try:
         worksheet = sheet.worksheet(GOOGLE_SHEET_NAME)
     except gspread.exceptions.WorksheetNotFound:
         worksheet = sheet.add_worksheet(title=GOOGLE_SHEET_NAME, rows="100", cols="5")
 
     worksheet.clear()
-
     headers = ["#", "Время", "Пользователь", "ID", "Действие"]
     data = [headers]
     
@@ -57,13 +57,11 @@ def upload_to_google_sheets(entries: list) -> str:
         data.append([str(i), e["time"], e["display_name"], str(e["user_id"]), e["action"]])
 
     worksheet.update(values=data, range_name="A1")
-    
     worksheet.format("A1:E1", {
         "textFormat": {"bold": True},
         "backgroundColor": {"red": 0.3, "green": 0.5, "blue": 0.7},
         "horizontalAlignment": "CENTER"
     })
-
     return f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}"
 
 
@@ -163,27 +161,29 @@ class FarmView(discord.ui.View):
             is_milked = False
             save_state()
 
-# ---------- ТАЙМЕР ----------
     async def log_click(self, interaction: discord.Interaction, action: str):
         now = datetime.now()
+        real_time = now.strftime("%Y-%m-%d %H:%M:%S")
         
+        # Округление вниз до часа: 17:35 -> 17:00
         current_hour = now.replace(minute=0, second=0, microsecond=0)
-        bucket_time = current_hour + timedelta(hours=3)
+        rounded_time = current_hour.strftime("%Y-%m-%d %H:00:00")
 
         entry = {
             "user_id": interaction.user.id,
             "user_name": str(interaction.user),
             "display_name": interaction.user.display_name,
             "action": action,
-            "time": bucket_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "time": real_time,          # В Google-таблицу
+            "rounded_time": rounded_time, # Для внутренней логики
             "channel_id": interaction.channel_id,
         }
         clicks_log.append(entry)
         save_log()
-        print(f"[{entry['time']}] {entry['user_name']} (ID: {entry['user_id']}) — {action}")
+        print(f"[{entry['rounded_time']}] {entry['user_name']} (ID: {entry['user_id']}) — {action}")
 
 
-# ---------- ОТПРАВКА СООБЩЕНИЯ ----------
+# ---------- ОТПРАВКА СООБЩЕНИЯ И ТАЙМЕР ----------
 async def send_farm_message():
     load_state()
     channel = bot.get_channel(CHANNEL_ID)
@@ -195,17 +195,49 @@ async def send_farm_message():
     await channel.send("Нажмите кнопку, когда выполните действие:", view=view)
 
 async def reset_timer():
-    global reminder_task
+    global reminder_task, next_message_time
     if reminder_task and not reminder_task.done():
         reminder_task.cancel()
-    reminder_task = asyncio.create_task(wait_and_send())
+        
+    now = datetime.now()
+    # 1. Округляем вниз до текущего часа (17:35 -> 17:00)
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    # 2. Прибавляем 3 часа (17:00 -> 20:00)
+    next_message_time = current_hour + timedelta(hours=3)
+    
+    # Вычисляем, сколько секунд ждать
+    wait_seconds = (next_message_time - now).total_seconds()
+    
+    print(f"Следующее сообщение будет в {next_message_time.strftime('%H:%M:%S')} (через {int(wait_seconds)} сек.)")
+    reminder_task = asyncio.create_task(wait_and_send(wait_seconds))
 
-async def wait_and_send():
+async def wait_and_send(wait_seconds):
     try:
-        await asyncio.sleep(REMINDER_HOURS * 60 * 60)
+        await asyncio.sleep(wait_seconds)
         await send_farm_message()
+        # После отправки сразу ставим следующий таймер (на случай, если никто не нажмет)
+        await reset_timer()
     except asyncio.CancelledError:
         pass
+
+
+# ---------- ЕЖЕДНЕВНАЯ ВЫГРУЗКА В 00:00 ----------
+@tasks.loop(time=time(hour=0, minute=0, second=0))
+async def daily_export():
+    if not clicks_log:
+        print("Ежедневная выгрузка: лог пуст.")
+        return
+        
+    print("Запуск ежедневной выгрузки в Google Sheets...")
+    loop = asyncio.get_event_loop()
+    try:
+        url = await loop.run_in_executor(None, upload_to_google_sheets, clicks_log)
+        channel = bot.get_channel(CHANNEL_ID)
+        if channel:
+            await channel.send(f"📊 **Ежедневная выгрузка логов** завершена!\nПосмотреть таблицу: {url}")
+        print("Ежедневная выгрузка успешно завершена.")
+    except Exception as e:
+        print(f"❌ Ошибка при ежедневной выгрузке: {e}")
 
 
 # ---------- СОБЫТИЯ ----------
@@ -216,6 +248,9 @@ async def on_ready():
     bot.add_view(FarmView())
     await send_farm_message()
     await reset_timer()
+    
+    if not daily_export.is_running():
+        daily_export.start()
 
 
 # ---------- КОМАНДЫ ----------
@@ -223,6 +258,29 @@ async def on_ready():
 async def test_cmd(ctx: commands.Context):
     await send_farm_message()
     await ctx.message.delete()
+
+@bot.command(name="time")
+async def time_cmd(ctx: commands.Context):
+    """Показывает, когда придет следующее сообщение с кнопками."""
+    global next_message_time
+    if next_message_time is None:
+        await ctx.send("Таймер пока не запущен. Нажмите любую кнопку, чтобы запустить его.")
+        return
+        
+    now = datetime.now()
+    wait_seconds = (next_message_time - now).total_seconds()
+    
+    if wait_seconds <= 0:
+        await ctx.send("Сообщение с кнопками должно прийти с минуты на минуту...")
+        return
+        
+    # Переводим секунды в часы, минуты и секунды
+    hours = int(wait_seconds // 3600)
+    minutes = int((wait_seconds % 3600) // 60)
+    seconds = int(wait_seconds % 60)
+    
+    time_str = next_message_time.strftime("%H:%M:%S")
+    await ctx.send(f"⏰ Следующее сообщение с кнопками придет в **{time_str}**.\nДо него осталось: **{hours} ч. {minutes} мин. {seconds} сек.**")
 
 @bot.command(name="log")
 @commands.has_permissions(administrator=True)
@@ -232,18 +290,11 @@ async def show_log(ctx: commands.Context, limit: int = 10):
         return
         
     recent = clicks_log[-limit:]
-    
     loop = asyncio.get_event_loop()
     try:
         url = await loop.run_in_executor(None, upload_to_google_sheets, recent)
     except Exception as e:
-        import traceback
-        error_text = traceback.format_exc()
-        # Отправляем ошибку в чат кусками, чтобы уложиться в лимит 2000 символов
-        if len(error_text) > 1900:
-            await ctx.send(f"❌ Ошибка:\n```python\n{error_text[-1900:]}\n```")
-        else:
-            await ctx.send(f"❌ Ошибка:\n```python\n{error_text}\n```")
+        await ctx.send(f"❌ Ошибка при отправке в Google: {e}")
         return
 
     await ctx.send(f"📊 Логи успешно обновлены! Посмотреть таблицу: {url}")
