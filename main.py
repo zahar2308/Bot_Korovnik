@@ -237,7 +237,13 @@ async def show_log(ctx: commands.Context, limit: int = 10):
     try:
         url = await loop.run_in_executor(None, upload_to_google_sheets, recent)
     except Exception as e:
-        await ctx.send(f"❌ Ошибка при отправке в Google: {e}")
+        import traceback
+        error_text = traceback.format_exc()
+        # Отправляем ошибку в чат кусками, чтобы уложиться в лимит 2000 символов
+        if len(error_text) > 1900:
+            await ctx.send(f"❌ Ошибка:\n```python\n{error_text[-1900:]}\n```")
+        else:
+            await ctx.send(f"❌ Ошибка:\n```python\n{error_text}\n```")
         return
 
     await ctx.send(f"📊 Логи успешно обновлены! Посмотреть таблицу: {url}")
