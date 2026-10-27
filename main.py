@@ -3,39 +3,68 @@ from discord.ext import commands
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # --- НАСТРОЙКИ ---
-TOKEN = os.getenv("DISCORD_TOKEN")
-if not TOKEN:
-    raise RuntimeError("Переменная окружения DISCORD_TOKEN не задана!")
-
+TOKEN = os.getenv("DISCORD_TOKEN", "ВАШ_ТОКЕН_ЗДЕСЬ")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "1197494268353314882"))
 REMINDER_HOURS = int(os.getenv("REMINDER_HOURS", "3"))
-LOG_CHANNEL_ID = None
+
+# Настройки Google
+GOOGLE_CREDENTIALS_FILE = "credentials.json" 
+GOOGLE_SHEET_ID = "1EXeD14wIJtXLGgLN1E47tW2HIhwrpzmym9aZuQPPXAw" 
+GOOGLE_SHEET_NAME = "Коровник" 
+# -----------------
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-# -----------------
 
 LOG_FILE   = DATA_DIR / "clicks.json"
 STATE_FILE = DATA_DIR / "state.json"
-EXCEL_FILE = DATA_DIR / "Logs.xlsx"
-SHEET_NAME = "Logs"
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-current_message_id = None
-reminder_task = None
 clicks_log = []
-
-# Глобальное состояние
 is_fed = False
 is_milked = False
+
+
+# ---------- РАБОТА С GOOGLE SHEETS ----------
+def upload_to_google_sheets(entries: list) -> str:
+    """Отправляет данные в Google Таблицу и возвращает ссылку на неё."""
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
+    client = gspread.authorize(creds)
+    
+    sheet = client.open_by_key(GOOGLE_SHEET_ID)
+    
+    try:
+        worksheet = sheet.worksheet(GOOGLE_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        worksheet = sheet.add_worksheet(title=GOOGLE_SHEET_NAME, rows="100", cols="5")
+
+    worksheet.clear()
+
+    headers = ["#", "Время", "Пользователь", "ID", "Действие"]
+    data = [headers]
+    
+    for i, e in enumerate(entries, start=1):
+        data.append([str(i), e["time"], e["display_name"], str(e["user_id"]), e["action"]])
+
+    worksheet.update(values=data, range_name="A1")
+    
+    worksheet.format("A1:E1", {
+        "textFormat": {"bold": True},
+        "backgroundColor": {"red": 0.3, "green": 0.5, "blue": 0.7},
+        "horizontalAlignment": "CENTER"
+    })
+
+    return f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}"
 
 
 # ---------- СОХРАНЕНИЕ СОСТОЯНИЯ ----------
@@ -66,51 +95,9 @@ def load_log():
         clicks_log = []
         print("Файл лога не найден — начинаем с пустого лога.")
 
-
 def save_log():
     with open(LOG_FILE, "w", encoding="utf-8") as f:
         json.dump(clicks_log, f, ensure_ascii=False, indent=2)
-
-
-# ---------- ЭКСПОРТ В EXCEL ----------
-def export_to_excel(entries: list) -> str:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = SHEET_NAME
-
-    headers = ["#", "Время", "Пользователь", "ID", "Действие"]
-    ws.append(headers)
-
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill("solid", fgColor="4F81BD")
-    thin = Side(style="thin", color="000000")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    center = Alignment(horizontal="center", vertical="center")
-
-    for col, _ in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = center
-        cell.border = border
-
-    for i, e in enumerate(entries, start=1):
-        ws.append([i, e["time"], e["display_name"], e["user_id"], e["action"]])
-
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=len(headers)):
-        for cell in row:
-            cell.border = border
-            cell.alignment = Alignment(horizontal="left", vertical="center")
-
-    widths = [6, 22, 24, 20, 12]
-    for i, w in enumerate(widths, start=1):
-        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
-
-    wb.save(EXCEL_FILE)
-    return EXCEL_FILE
 
 
 # ---------- VIEW С КНОПКАМИ ----------
@@ -131,7 +118,6 @@ class FarmView(discord.ui.View):
 
         self.btn_feed.callback = self.feed_callback
         self.btn_milk.callback = self.milk_callback
-
         self.add_item(self.btn_feed)
         self.add_item(self.btn_milk)
 
@@ -161,30 +147,27 @@ class FarmView(discord.ui.View):
         await self.log_click(interaction, "подоил")
         await interaction.response.send_message("Вы подоили! 🥛", ephemeral=True)
         
+        self.btn_milk.disabled = True
         await self.update_buttons(interaction)
         await reset_timer()
 
     async def update_buttons(self, interaction: discord.Interaction):
         global is_fed, is_milked
         
-        # Меняем текст на кнопках в ТЕКУЩЕМ сообщении (делаем зелеными)
         self.btn_feed.label = f"{'🟢' if is_fed else '🔴'} покормил"
         self.btn_milk.label = f"{'🟢' if is_milked else '🔴'} подоил"
         await interaction.message.edit(view=self)
 
-        # Если нажаты ОБЕ кнопки
         if is_fed and is_milked:
-            # СБРАСЫВАЕМ состояние для СЛЕДУЮЩЕГО сообщения, 
-            # но НЕ трогаем кнопки в текущем (они останутся зелеными)
             is_fed = False
             is_milked = False
             save_state()
-# ---------- ТАЙМЕР НА 3 ЧАСА ----------
- async def log_click(self, interaction: discord.Interaction, action: str):
+
+# ---------- ТАЙМЕР ----------
+    async def log_click(self, interaction: discord.Interaction, action: str):
         now = datetime.now()
         
         current_hour = now.replace(minute=0, second=0, microsecond=0)
-        
         bucket_time = current_hour + timedelta(hours=3)
 
         entry = {
@@ -202,30 +185,20 @@ class FarmView(discord.ui.View):
 
 # ---------- ОТПРАВКА СООБЩЕНИЯ ----------
 async def send_farm_message():
-    global current_message_id
-    # При отправке нового сообщения читаем актуальное состояние из файла
     load_state()
-    
     channel = bot.get_channel(CHANNEL_ID)
-    if channel is None:
-        channel = discord.utils.get(bot.get_all_channels(), id=CHANNEL_ID)
-        
     if channel is None:
         print(f"❌ ОШИБКА: Канал с ID {CHANNEL_ID} не найден!")
         return
         
     view = FarmView()
-    msg = await channel.send("Нажмите кнопку, когда выполните действие:", view=view)
-    current_message_id = msg.id
-    print(f"✅ Сообщение отправлено (ID: {current_message_id}) в канал {channel.name}")
-
+    await channel.send("Нажмите кнопку, когда выполните действие:", view=view)
 
 async def reset_timer():
     global reminder_task
     if reminder_task and not reminder_task.done():
         reminder_task.cancel()
     reminder_task = asyncio.create_task(wait_and_send())
-
 
 async def wait_and_send():
     try:
@@ -248,7 +221,6 @@ async def on_ready():
 # ---------- КОМАНДЫ ----------
 @bot.command(name="test")
 async def test_cmd(ctx: commands.Context):
-    """Принудительно выводит кнопки (состояние сохраняется)."""
     await send_farm_message()
     await ctx.message.delete()
 
@@ -256,30 +228,25 @@ async def test_cmd(ctx: commands.Context):
 @commands.has_permissions(administrator=True)
 async def show_log(ctx: commands.Context, limit: int = 10):
     if not clicks_log:
-        await ctx.send(f"Лист **{SHEET_NAME}** пуст.")
+        await ctx.send(f"Таблица **{GOOGLE_SHEET_NAME}** пуста.")
         return
+        
     recent = clicks_log[-limit:]
+    
     loop = asyncio.get_event_loop()
     try:
-        path = await loop.run_in_executor(None, export_to_excel, recent)
-    except ImportError:
-        await ctx.send("❌ Не установлен модуль `openpyxl`. Установите: `pip install openpyxl`")
+        url = await loop.run_in_executor(None, upload_to_google_sheets, recent)
+    except Exception as e:
+        await ctx.send(f"❌ Ошибка при отправке в Google: {e}")
         return
-    await ctx.send(f"📊 Лист **{SHEET_NAME}** — последние {len(recent)} записей:", file=discord.File(path))
 
+    await ctx.send(f"📊 Логи успешно обновлены! Посмотреть таблицу: {url}")
 
 @bot.command(name="clearlog")
 @commands.has_permissions(administrator=True)
 async def clear_log(ctx: commands.Context):
     clicks_log.clear()
     save_log()
-    await ctx.send(f"Лист **{SHEET_NAME}** очищен.")
-
-
-@bot.command(name="logcount")
-@commands.has_permissions(administrator=True)
-async def log_count(ctx: commands.Context):
-    await ctx.send(f"Всего записей в листе **{SHEET_NAME}**: **{len(clicks_log)}**")
-
+    await ctx.send(f"Лог очищен.")
 
 bot.run(TOKEN)
