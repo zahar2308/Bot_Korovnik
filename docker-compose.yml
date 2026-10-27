@@ -3,22 +3,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: discord-farm-bot
     container_name: discord-farm-bot
-    pull_policy: build
     restart: unless-stopped
     volumes:
-      - farm-data:/app/data
+      # Папка данных: хост Synology → контейнер
+      - /volume2/docker/discord/korovnic:/app/data
     environment:
       - TZ=Europe/Moscow
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - CHANNEL_ID=${CHANNEL_ID:-1197494268353314882}
       - REMINDER_HOURS=${REMINDER_HOURS:-3}
-      - DATA_DIR=/app/data          # ← ВНУТРИ контейнера, не путь хоста!
+      - DATA_DIR=/app/data
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-volumes:
-  farm-data:
