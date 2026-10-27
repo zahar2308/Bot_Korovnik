@@ -6,12 +6,15 @@ services:
     image: discord-farm-bot:latest
     container_name: discord-farm-bot
     restart: unless-stopped
-    env_file:
-      - .env
     volumes:
       - farm-data:/app/data
     environment:
       - TZ=Europe/Moscow
+      # Секреты задаются в Portainer → Stack → Environment variables
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - CHANNEL_ID=${CHANNEL_ID:-1197494268353314882}
+      - REMINDER_HOURS=${REMINDER_HOURS:-3}
+      - DATA_DIR=${DATA_DIR:-/app/data}
     logging:
       driver: "json-file"
       options:
